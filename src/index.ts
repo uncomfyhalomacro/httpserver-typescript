@@ -1,49 +1,57 @@
 import express from "express";
-import type ApiConfig from "./config.js";
+import { config } from "./config.js";
+import postgres from "postgres";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { drizzle } from "drizzle-orm/postgres-js";
+import type { NewUser } from "./db/schema.js";
+import type { NextFunction, Request, Response } from "express";
+import { createUser, deleteAllUsers } from "./db/queries/users.js";
+import {
+	createChirp,
+	deleteAllChirps,
+	getAllChirps,
+	getChirpById,
+} from "./db/queries/chirps.js";
 
-const apiConfig: ApiConfig = {
-	fileserverHits: 0,
-};
-
+const migrationClient = postgres(config.dbConfig.dbURL, { max: 1 });
+await migrate(drizzle(migrationClient), config.dbConfig.migrationConfig);
 const app = express();
 const PORT = 8080;
 
 class BadRequestError extends Error {
 	async send(res: Response, next: NextFunction) {
 		res.status(400).send({ error: this.message });
-		await next();
+		next();
 	}
 }
 
 class UnauthorizedError extends Error {
 	async send(res: Response, next: NextFunction) {
 		res.status(401).send({ error: this.message });
-		await next();
+		next();
 	}
 }
 
 class ForbiddenError extends Error {
 	async send(res: Response, next: NextFunction) {
 		res.status(403).send({ error: this.message });
-		await next();
+		next();
 	}
 }
 
 class NotFoundError extends Error {
 	async send(res: Response, next: NextFunction) {
 		res.status(404).send({ error: this.message });
-		await next();
+		next();
 	}
 }
 
 class InternalServerError extends Error {
 	async send(res: Response, next: NextFunction) {
 		res.status(500).send({ error: this.message });
-		await next();
+		next();
 	}
 }
-
-import type { NextFunction, Request, Response } from "express";
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => void;
 
@@ -58,7 +66,7 @@ const middlewwareLogResponses: Middleware = async (req, res, next) => {
 			console.log(`[NON-OK] ${method} ${url} = Status: ${statusCode}`);
 		}
 	});
-	await next();
+	next();
 };
 
 const middlewareIncrementFileServerHits: Middleware = async (
@@ -66,8 +74,8 @@ const middlewareIncrementFileServerHits: Middleware = async (
 	res,
 	next,
 ) => {
-	apiConfig.fileserverHits++;
-	await next();
+	config.apiConfig.fileserverHits++;
+	next();
 };
 
 const middlewareErrorHandler = async (
@@ -95,13 +103,13 @@ const handlerMetrics = async (req: Request, res: Response) => {
 	return res.status(200).send(`<html>
   <body>
     <h1>Welcome, Chirpy Admin</h1>
-    <p>Chirpy has been visited ${apiConfig.fileserverHits} times!</p>
+    <p>Chirpy has been visited ${config.apiConfig.fileserverHits} times!</p>
   </body>
 </html>`);
 };
 
 const handlerResetServerHits = async (req: Request, res: Response) => {
-	apiConfig.fileserverHits = 0;
+	config.apiConfig.fileserverHits = 0;
 	return res.status(200).send("OK");
 };
 
@@ -110,12 +118,39 @@ app.use(middlewwareLogResponses);
 app.use("/app", middlewareIncrementFileServerHits);
 app.use("/app", express.static("./src/app"));
 app.get("/api/healthz", handlerReadiness);
-app.post("/api/validate_chirp", async (req, res, next) => {
+app.post("/api/users", async (req, res, next) => {
+	type Payload = {
+		email: string;
+	};
+	const payload: Payload = req.body;
+	if (!payload) throw new BadRequestError("No payload");
+	const newUser: NewUser = {
+		email: payload.email,
+	};
+	const result = await createUser(newUser).catch(next);
+	return res.status(201).send(result);
+});
+
+app.get("/api/chirps", async (_req, res, next) => {
+	return res.status(200).send(await getAllChirps().catch(next));
+});
+app.get("/api/chirps/:chirpId", async (req, res, next) => {
+	const { chirpId } = req.params;
+
+	return res.status(200).send(await getChirpById(chirpId).catch(next));
+});
+
+app.post("/api/chirps", async (req, res, next) => {
 	const profaneWords = ["kerfuffle", "sharbert", "fornax"];
 	type responseBody = {
 		cleanedBody: string;
 	};
-	const { body }: { body: string | undefined } = req.body;
+
+	type requestBody = {
+		body: string;
+		userId: string;
+	};
+	const { body, userId }: requestBody = req.body;
 	try {
 		if (!body) {
 			return res.send({
@@ -137,7 +172,12 @@ app.post("/api/validate_chirp", async (req, res, next) => {
 				cleanedBody: cleanedBody.join(" "),
 			};
 
-			return res.status(200).send(ret);
+			const result = await createChirp({
+				body: ret.cleanedBody,
+				userId: userId,
+			});
+
+			return res.status(201).send(result);
 		}
 		throw new BadRequestError("Chirp is too long. Max length is 140");
 	} catch (error) {
@@ -145,7 +185,11 @@ app.post("/api/validate_chirp", async (req, res, next) => {
 	}
 });
 app.get("/admin/metrics", handlerMetrics);
-app.post("/admin/reset", handlerResetServerHits);
+app.post("/admin/reset", async (req, res, next) => {
+	await deleteAllUsers().catch(next);
+	await deleteAllChirps().catch(next);
+	return res.status(200).send("OK");
+});
 app.use(middlewareErrorHandler);
 app.listen(PORT, () =>
 	console.log(`Server is running at http://localhost:${PORT}`),
