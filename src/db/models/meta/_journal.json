@@ -15,6 +15,13 @@
       "when": 1772525053735,
       "tag": "0001_dashing_liz_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772546573370,
+      "tag": "0002_sour_slapstick",
+      "breakpoints": true
     }
   ]
 }

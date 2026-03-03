@@ -5,7 +5,12 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { NewUser } from "./db/schema.js";
 import type { NextFunction, Request, Response } from "express";
-import { createUser, deleteAllUsers } from "./db/queries/users.js";
+import {
+	createUser,
+	deleteAllUsers,
+	getUserByEmail,
+} from "./db/queries/users.js";
+import { verifyPassword, hashPassword } from "./auth.js";
 import {
 	createChirp,
 	deleteAllChirps,
@@ -119,17 +124,56 @@ app.use("/app", middlewareIncrementFileServerHits);
 app.use("/app", express.static("./src/app"));
 app.get("/api/healthz", handlerReadiness);
 app.post("/api/users", async (req, res, next) => {
-	type Payload = {
+	type CommonBody = {
 		email: string;
+		password: string;
+		hashedPassword: string;
 	};
-	const payload: Payload = req.body;
+	type Payload = Omit<CommonBody, "hashedPassword">;
+	const payload: Payload | undefined = req.body;
 	if (!payload) throw new BadRequestError("No payload");
+	const hashedPassword = await hashPassword(payload.password);
 	const newUser: NewUser = {
 		email: payload.email,
+		hashedPassword,
 	};
 	const result = await createUser(newUser).catch(next);
-	return res.status(201).send(result);
+	if (!result) throw new Error("Something went wrong when registering user");
+	return res.status(201).send({
+		id: result.id,
+		email: result.email,
+		createdAt: result.createdAt,
+		updatedAt: result.updatedAt,
+	});
 });
+
+app.post(
+	"/api/login",
+
+	async (req, res, next) => {
+		type CommonBody = {
+			email: string;
+			password: string;
+			hashedPassword: string;
+		};
+		type Payload = Omit<CommonBody, "hashedPassword">;
+		const payload: Payload | undefined = req.body;
+		if (!payload) throw new UnauthorizedError("incorrect email or password");
+		const user = await getUserByEmail(payload.email);
+		if (!user) throw new UnauthorizedError("incorrect email or password");
+		const verified = await verifyPassword(
+			user.hashedPassword,
+			payload.password,
+		).catch(next);
+		if (!verified) throw new UnauthorizedError("incorrect email or password");
+		return res.status(200).send({
+			id: user.id,
+			email: user.email,
+			createdAt: user.createdAt,
+			updatedAt: user.updatedAt,
+		});
+	},
+);
 
 app.get("/api/chirps", async (_req, res, next) => {
 	return res.status(200).send(await getAllChirps().catch(next));
