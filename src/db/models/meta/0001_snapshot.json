@@ -1,6 +1,6 @@
 {
-  "id": "1c928f0f-70d0-43b1-87a5-9394be9d5de5",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "472e6654-b368-44fd-b807-fcaeabfdd89e",
+  "prevId": "1c928f0f-70d0-43b1-87a5-9394be9d5de5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -84,8 +84,7 @@
           "name": "expires_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": true
         },
         "revoked_at": {
           "name": "revoked_at",

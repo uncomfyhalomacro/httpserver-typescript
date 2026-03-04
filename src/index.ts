@@ -3,7 +3,8 @@ import { config } from "./config.js";
 import postgres from "postgres";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { drizzle } from "drizzle-orm/postgres-js";
-import type { NewUser } from "./db/schema.js";
+import { JsonWebTokenError } from "jsonwebtoken";
+import type { NewUser, NewRefreshToken } from "./db/schema.js";
 import type { NextFunction, Request, Response } from "express";
 import {
 	createUser,
@@ -24,10 +25,21 @@ import {
 	getChirpById,
 } from "./db/queries/chirps.js";
 
+import {
+	createRefreshToken,
+	deleteAllRefTokens,
+	getRefreshTokenByToken,
+	getRefreshTokenByUserId,
+	revokeRefreshTokenByToken,
+	updateRefreshTokenByToken,
+} from "./db/queries/refreshToken.js";
+
 const migrationClient = postgres(config.dbConfig.dbURL, { max: 1 });
 await migrate(drizzle(migrationClient), config.dbConfig.migrationConfig);
 const app = express();
 const PORT = 8080;
+const HOUR = 60 * 60 * 60;
+const SIXTY_DAYS = HOUR * 24 * 60;
 
 class BadRequestError extends Error {
 	async send(res: Response, next: NextFunction) {
@@ -175,25 +187,74 @@ app.post(
 		if (!verified) throw new UnauthorizedError("incorrect email or password");
 		const token = makeJWT(
 			user.id,
-			payload.expiresInSeconds ?? 60 * 60 * 60,
+			payload.expiresInSeconds ?? HOUR,
 			config.jwtSecret,
 		);
+		const refreshToken = await createRefreshToken({
+			userId: user.id,
+			expiresAt: new Date(Math.floor(Date.now() / 1000) + SIXTY_DAYS),
+		});
 		return res.status(200).send({
 			id: user.id,
 			email: user.email,
 			createdAt: user.createdAt,
 			updatedAt: user.updatedAt,
 			token: token,
+			refreshToken: refreshToken.token,
 		});
 	},
 );
+app.post("/api/refresh", async (req, res, next) => {
+	const token = await getBearerToken(req);
+	const refreshToken = await getRefreshTokenByToken(token);
+	if (!refreshToken) throw new UnauthorizedError("no refresh token");
+	if (refreshToken.expiresAt.getTime() < Math.floor(Date.now() / 1000))
+		throw new UnauthorizedError("refresh token has expired");
+	if (refreshToken.revokedAt !== null) {
+		if (refreshToken.revokedAt.getTime() > Math.floor(Date.now() / 1000))
+			throw new UnauthorizedError("refresh token has been revoked");
+	}
+	const accessToken = makeJWT(refreshToken.userId, HOUR, config.jwtSecret);
+	return res.status(200).send({
+		token: accessToken,
+	});
+});
 
-app.get("/api/chirps", async (_req, res, next) => {
+app.post("/api/revoke", async (req, res, next) => {
+	const token = await getBearerToken(req);
+	const newRefToken = await revokeRefreshTokenByToken(token);
+	return res.status(204).send({
+		token: newRefToken.token,
+		revokedAt: newRefToken.revokedAt,
+	});
+});
+
+app.get("/api/chirps", async (req, res, next) => {
+	const token = await getBearerToken(req);
+	const refreshToken = await getRefreshTokenByToken(token);
+	if (
+		Math.floor(refreshToken.expiresAt.getTime() / 1000) <
+		Math.floor(Date.now() / 1000)
+	)
+		throw new UnauthorizedError("refresh token has expired");
+	if (refreshToken.revokedAt !== null) {
+		throw new UnauthorizedError("refresh token has been revoked");
+	}
 	return res.status(200).send(await getAllChirps().catch(next));
 });
 app.get("/api/chirps/:chirpId", async (req, res, next) => {
 	const { chirpId } = req.params;
 
+	const token = await getBearerToken(req);
+	const refreshToken = await getRefreshTokenByToken(token);
+	if (
+		Math.floor(refreshToken.expiresAt.getTime() / 1000) <
+		Math.floor(Date.now() / 1000)
+	)
+		throw new UnauthorizedError("refresh token has expired");
+	if (refreshToken.revokedAt !== null) {
+		throw new UnauthorizedError("refresh token has been revoked");
+	}
 	return res.status(200).send(await getChirpById(chirpId).catch(next));
 });
 
@@ -203,8 +264,8 @@ app.post("/api/chirps", async (req, res, next) => {
 		const token = getBearerToken(req);
 
 		userId = validateJWT(token, config.jwtSecret);
-	} catch {
-		const err = new UnauthorizedError("token invalid");
+	} catch (error) {
+		const err = new UnauthorizedError((error as JsonWebTokenError).message);
 		return next(err);
 	}
 	const profaneWords = ["kerfuffle", "sharbert", "fornax"];
@@ -254,9 +315,10 @@ app.post("/api/chirps", async (req, res, next) => {
 });
 app.get("/admin/metrics", handlerMetrics);
 app.post("/admin/reset", async (req, res, next) => {
-	await deleteAllUsers().catch(()=>{})
-	await deleteAllChirps().catch(()=>{})
-	res.status(200)
+	await deleteAllUsers().catch(() => {});
+	await deleteAllChirps().catch(() => {});
+	await deleteAllRefTokens().catch(() => {});
+	res.status(200);
 	return res.send("OK");
 });
 app.use(middlewareErrorHandler);
