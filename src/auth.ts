@@ -1,7 +1,9 @@
+import { argon2id, hash, verify } from "argon2";
+import type { Request } from "express";
+import jwt from "jsonwebtoken";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
-import { argon2id, hash, verify } from "argon2";
-import jwt from "jsonwebtoken";
+import { config } from "./config.js";
 
 const generateCommonOptions = (salt: NonSharedBuffer) => {
 	const parameters = {
@@ -48,4 +50,12 @@ export const validateJWT = (token: string, secret: string): string => {
 	}
 	if (!payload.sub) throw new Error("no sub field found");
 	return payload.sub;
+};
+
+export const getBearerToken = (req: Request) => {
+	const authorizationHeader = req.get("authorization") ?? "";
+	const [b, token] = authorizationHeader.split(" ");
+	if (b !== "Bearer") throw new Error("not a bearer token");
+	if (token.trim() === "") throw new Error("no token found");
+	return token;
 };

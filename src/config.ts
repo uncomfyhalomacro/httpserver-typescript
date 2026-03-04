@@ -26,6 +26,7 @@ type ApiConfig = {
 type CoreConfig = {
 	dbConfig: DBConfig;
 	apiConfig: ApiConfig;
+	jwtSecret: string
 };
 
 export const config: CoreConfig = {
@@ -37,6 +38,7 @@ export const config: CoreConfig = {
 		fileserverHits: 0,
 		platform: envOrThrow("PLATFORM")
 	},
+	jwtSecret: envOrThrow("JWT_SECRET")
 };
 
 export { envOrThrow };

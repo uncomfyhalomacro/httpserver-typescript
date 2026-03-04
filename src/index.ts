@@ -10,7 +10,13 @@ import {
 	deleteAllUsers,
 	getUserByEmail,
 } from "./db/queries/users.js";
-import { verifyPassword, hashPassword } from "./auth.js";
+import {
+	verifyPassword,
+	hashPassword,
+	getBearerToken,
+	makeJWT,
+	validateJWT,
+} from "./auth.js";
 import {
 	createChirp,
 	deleteAllChirps,
@@ -155,6 +161,7 @@ app.post(
 			email: string;
 			password: string;
 			hashedPassword: string;
+			expiresInSeconds: number | undefined;
 		};
 		type Payload = Omit<CommonBody, "hashedPassword">;
 		const payload: Payload | undefined = req.body;
@@ -166,11 +173,17 @@ app.post(
 			payload.password,
 		).catch(next);
 		if (!verified) throw new UnauthorizedError("incorrect email or password");
+		const token = makeJWT(
+			user.id,
+			payload.expiresInSeconds ?? 60 * 60 * 60,
+			config.jwtSecret,
+		);
 		return res.status(200).send({
 			id: user.id,
 			email: user.email,
 			createdAt: user.createdAt,
 			updatedAt: user.updatedAt,
+			token: token,
 		});
 	},
 );
@@ -185,6 +198,15 @@ app.get("/api/chirps/:chirpId", async (req, res, next) => {
 });
 
 app.post("/api/chirps", async (req, res, next) => {
+	let userId = "";
+	try {
+		const token = getBearerToken(req);
+
+		userId = validateJWT(token, config.jwtSecret);
+	} catch {
+		const err = new UnauthorizedError("token invalid");
+		return next(err);
+	}
 	const profaneWords = ["kerfuffle", "sharbert", "fornax"];
 	type responseBody = {
 		cleanedBody: string;
@@ -192,9 +214,8 @@ app.post("/api/chirps", async (req, res, next) => {
 
 	type requestBody = {
 		body: string;
-		userId: string;
 	};
-	const { body, userId }: requestBody = req.body;
+	const { body }: requestBody = req.body;
 	try {
 		if (!body) {
 			return res.send({
@@ -221,7 +242,10 @@ app.post("/api/chirps", async (req, res, next) => {
 				userId: userId,
 			});
 
-			return res.status(201).send(result);
+			return res.status(201).send({
+				...result,
+				userId: userId,
+			});
 		}
 		throw new BadRequestError("Chirp is too long. Max length is 140");
 	} catch (error) {
@@ -230,9 +254,10 @@ app.post("/api/chirps", async (req, res, next) => {
 });
 app.get("/admin/metrics", handlerMetrics);
 app.post("/admin/reset", async (req, res, next) => {
-	await deleteAllUsers().catch(next);
-	await deleteAllChirps().catch(next);
-	return res.status(200).send("OK");
+	await deleteAllUsers().catch(()=>{})
+	await deleteAllChirps().catch(()=>{})
+	res.status(200)
+	return res.send("OK");
 });
 app.use(middlewareErrorHandler);
 app.listen(PORT, () =>

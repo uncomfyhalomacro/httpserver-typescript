@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1772517937656,
-      "tag": "0000_deep_kingpin",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1772525053735,
-      "tag": "0001_dashing_liz_osborn",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1772546573370,
-      "tag": "0002_sour_slapstick",
+      "when": 1772594257168,
+      "tag": "0000_slow_cerebro",
       "breakpoints": true
     }
   ]
